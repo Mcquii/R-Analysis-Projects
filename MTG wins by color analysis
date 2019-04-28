@@ -2,22 +2,28 @@ library(tidyverse)
 library(lubridate)
 library(stringr)
 
+#Load csv data
 mtgstat <- read_csv("Downloads/MTG Stat Data - Data.csv", col_types = cols(Format = col_factor(levels = c("Bo1","Bo3", "Bo1 Sealed")),
 Set = col_factor(levels = c("RNA","RIX", "C19", "GRN"))))
 
+#Process dates data to date format
 mtgstat$Date <- mtgstat$Date %>% parse_date_time(orders = "mdy")
 
 mtgstat %>% glimpse
 
+#Exploring wins
 mtgstat %>% ggplot(mapping = aes(x = `Record (wins)`)) +
     geom_histogram(bins = 5)
 
+#Create a new dataframe of deck colors where win ratio was >1
 wincolor <- mtgstat %>% 
   filter(`Record (ratio)` > 1) %>% 
   select(Colors)
 
+#Clean wins by color dataframe to remove whitespace and commas
 wc <- data.frame(lapply(wincolor, function(x) {gsub("[, ]", "", x)}))
 
+#Count and display the frequency of each color in winning draft decks
 colorfreq <- table(unlist(strsplit(paste(wc$Colors, collapse=""), NULL)))
 
 colorfreq
