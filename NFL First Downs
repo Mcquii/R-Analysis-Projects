@@ -1,0 +1,125 @@
+library(tidyverse)
+library(MLmetrics)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(nflscrapR)
+
+###Data Acquisition
+pbp18 <- season_play_by_play(2018)
+write.csv(pbp18, file = "Work/Data Analysis Cert Work/Data 220 ML/Final Project/FPData.csv", row.names = FALSE)
+FPData <- read_csv("Work/Data Analysis Cert Work/Data 220 ML/Final Project/FPData.csv")
+
+#Select only columns used in our models
+pbp18.2 <- FPData %>% select(down, yrdline100, ydstogo, FirstDown, Yards.Gained, 
+                          PlayType, PassAttempt, PassOutcome, PassLength, PassLocation, QBHit, AirYards, YardsAfterCatch, InterceptionThrown, RushAttempt,
+                          Reception, Fumble, Sack, Accepted.Penalty, Penalty.Yards, WPA, EPA)
+                          
+#Drop rows where a first down-irrelevant plays occurred (kickoff, fieldgoal, QB kneel, etc)
+pbp18.2 <-pbp18.2 %>% filter(!PlayType %in% c("End of Game", "Spike", "Field Goal", "Kickoff", "No Play", "Extra Point", 
+                                              "Half End", "Timeout", "QB Kneel", "Two Minute Warning", "Quarter End"))
+                                              
+#Drop rows where a penalty occurred
+pbp18.2 <-pbp18.2 %>% filter(Accepted.Penalty == 0)
+
+#Change punts, fumbles and interceptions to count as "no first down", 
+#count 4th down plays where yds gained < yds to go as "no first down"
+pbp18.2<- pbp18.2 %>% mutate(FirstDown = ifelse(PlayType %in% "Punt", 0, FirstDown))
+pbp18.2<- pbp18.2 %>% mutate(FirstDown = ifelse(Fumble == 1, 0, FirstDown))
+pbp18.2<- pbp18.2 %>% mutate(FirstDown = ifelse(InterceptionThrown == 1, 0, FirstDown))
+pbp18.2<- pbp18.2 %>% mutate(FirstDown = ifelse(Yards.Gained<ydstogo & down == 4, 0, FirstDown))
+
+#Remove NAs from Passing data by putting a "Run" category into passing categories
+#Same with Sack and Punt playtypes
+pbp18.2 <-pbp18.2 %>% mutate(PassOutcome = ifelse(RushAttempt == 1, "Run", PassOutcome))
+pbp18.2 <-pbp18.2 %>% mutate(PassLength = ifelse(RushAttempt == 1, "Run", PassLength))
+pbp18.2 <-pbp18.2 %>% mutate(PassLocation = ifelse(RushAttempt == 1, "Run", PassLocation))
+pbp18.2 <-pbp18.2 %>% mutate(PassOutcome = ifelse(PlayType %in% "Punt", "Punt", PassOutcome))
+pbp18.2 <-pbp18.2 %>% mutate(PassLength = ifelse(PlayType %in% "Punt", "Punt", PassLength))
+pbp18.2 <-pbp18.2 %>% mutate(PassLocation = ifelse(PlayType %in% "Punt", "Punt", PassLocation))
+pbp18.2 <-pbp18.2 %>% mutate(PassOutcome = ifelse(PlayType %in% "Sack", "Sack", PassOutcome))
+pbp18.2 <-pbp18.2 %>% mutate(PassLength = ifelse(PlayType %in% "Sack", "Sack", PassLength))
+pbp18.2 <-pbp18.2 %>% mutate(PassLocation = ifelse(PlayType %in% "Sack", "Sack", PassLocation))
+
+#Visual Exploration
+ggplot(pbp18.2, aes(x=factor(PlayType)))+
+  geom_bar(stat="count", width=0.7, fill="steelblue")+
+  facet_wrap(~pbp18.2$FirstDown)+
+  labs(title = "Count of Plays in Significant Categories")
+           
+
+ggplot(pbp18.2, aes(x=factor(PassOutcome)))+
+  geom_bar(stat="count", width=0.7, fill="steelblue")+
+  facet_wrap(~pbp18.2$FirstDown)+
+  labs(title = "Count of Play Outcomes")
+
+
+###Classification Model
+#Sample/Test Split
+set.seed(204)
+train <- sample_frac(pbp18.2, 0.7)
+train_index <- as.numeric(rownames(train))
+test <- pbp18.2[-train_index, ]
+
+
+#Model (all-inclusive)
+modl1 = glm(FirstDown~. ,
+           data = train, family = binomial)
+           
+summary(modl1)
+
+#Model (revised)
+modl2 = glm(FirstDown~ yrdline100 + ydstogo + PassOutcome + PassLength + EPA + AirYards 
+      + YardsAfterCatch,
+           data = train, family = binomial)
+
+summary(modl2)
+
+
+#Predictions 
+p = predict(modl2, newdata = test, type = "response")
+p = ifelse(p >= 0.45, 1,0)
+
+confusionMatrix(factor(p), factor(test$FirstDown))
+
+AUC(y_pred = p, y_true = test$FirstDown)
+Recall(y_pred = p, y_true = test$FirstDown)
+Precision(y_pred = p, y_true = test$FirstDown)
+F1_Score(y_pred = p, y_true = test$FirstDown)
+
+
+
+###Decision Tree Model
+  #Samples
+  set.seed(2024)
+  train.dt <- sample_frac(pbp18.2, 0.7)
+  train_index.dt <- as.numeric(rownames(train.dt))
+  test.dt <- pbp18.2[-train_index.dt, ]
+
+
+#Model (all inclusive)
+rf1 = rpart(FirstDown~.,
+           data = train, method = 'class') 
+
+summary(rf1)
+
+#Model (revised)
+rf2 = rpart(FirstDown~ PassOutcome + ydstogo + YardsAfterCatch + yrdline100 + down,
+            data = train, method = 'class') 
+rpart.plot(rf2)
+
+#Predictions
+predictFirstDown = predict(rf2, newdata = test, type="class")
+
+
+
+#Performance Metrics
+confusionMatrix(factor(predictFirstDown), factor(test$FirstDown))
+AUC(y_pred = predictFirstDown, y_true = test$FirstDown)
+Recall(y_pred = predictFirstDown, y_true = test$FirstDown)
+Precision(y_pred = predictFirstDown, y_true = test$FirstDown)
+F1_Score(y_pred = predictFirstDown, y_true = test$FirstDown)
+
+
+
+
